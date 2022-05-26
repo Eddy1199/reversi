@@ -1,0 +1,1043 @@
+<body style="margin:0"><canvas id="canvas"></canvas></body>
+
+<script>
+var canvas = document.getElementById("canvas");
+var ctx = canvas.getContext("2d");
+canvas.height=window.innerHeight;
+canvas.width=window.innerWidth;
+
+document.body.style.backgroundColor="#225511";
+
+var mapsize=8, head=30, gameMode=1, // 0: human vs AI  1: AI vs AI
+	testLimit=20, testCount=0, testResult=[0,0],
+	topleft=[], canvasSize, blocksize, 
+	firstgo=1, curPlayer=firstgo, animID,
+	skipping=false, gameover=false, draftover=false, 
+	dir=[[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]],
+	lastComponent=[], recentTouch,
+	map=[], maphistory=[], turnhistory=[],
+	debugging=1, stepCount=0;
+
+var 
+	ai_champion=new Player_AI_VeryHard(),
+	ai_challenger=new Player_AI_VH2();
+
+if (!debugging) console.log = ()=>{};
+
+window.onresize=function(){
+	canvas.height=window.innerHeight;
+	canvas.width=window.innerWidth;	
+	var h=canvas.height-head, w=canvas.width,
+		min= h > w ? w: h;
+	canvasSize= min * 0.9;
+	topleft[0]=(w-canvasSize)/2;
+	topleft[1]=(h-canvasSize)/2 + head;
+	blocksize=canvasSize/mapsize;
+	render();
+};
+
+function Player_AI_VH2(){
+	
+	var mapsize=8,
+		dir=[[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]],
+		draftmap=[], xp=[], xp_corner=mapsize*8, xp_side=parseInt(mapsize/2),
+		ai_depth=6, winprize=99999;
+
+	for (var i=0; i<mapsize; i++){
+		xp.push([]);
+		for (var j=0; j<mapsize; j++){
+			xp[i].push(1);
+		};
+	};
+	for (var i=0; i<mapsize; i++){
+		xp[0][i]=xp_side;
+		xp[mapsize-1][i]=xp_side;
+		xp[i][0]=xp_side;
+		xp[i][mapsize-1]=xp_side;
+	};
+	for (var i=0; i<mapsize; i++){
+		xp[1][i]=-xp_side;
+		xp[mapsize-2][i]=-xp_side;
+		xp[i][1]=-xp_side;
+		xp[i][mapsize-2]=-xp_side;
+	};
+	xp[0][0]=xp_corner;
+	xp[mapsize-1][0]=xp_corner;
+	xp[0][mapsize-1]=xp_corner;
+	xp[mapsize-1][mapsize-1]=xp_corner;
+
+	function updateXp(){
+		if (draftmap[0][0]!=0) {
+			xp[0][1]=1;
+			xp[1][0]=1;
+			xp[1][1]=1;
+		} else {
+			xp[0][1]=-xp_side*2;
+			xp[1][0]=-xp_side*2;
+			xp[1][1]=-xp_side*2;
+		};
+		if (draftmap[mapsize-1][0]!=0) {
+			xp[mapsize-2][0]=1;
+			xp[mapsize-2][1]=1;
+			xp[mapsize-1][1]=1;
+		} else {
+			xp[mapsize-2][0]=-xp_side*2;
+			xp[mapsize-2][1]=-xp_side*2;
+			xp[mapsize-1][1]=-xp_side*2;
+		};
+		if (draftmap[0][mapsize-1]!=0) {
+			xp[0][mapsize-2]=1;
+			xp[1][mapsize-1]=1;
+			xp[1][mapsize-2]=1;
+		} else {
+			xp[0][mapsize-2]=-xp_side*2;
+			xp[1][mapsize-1]=-xp_side*2;
+			xp[1][mapsize-2]=-xp_side*2;
+		};
+		if (draftmap[mapsize-1][mapsize-1]!=0) {
+			xp[mapsize-2][mapsize-1]=1;
+			xp[mapsize-2][mapsize-2]=1;
+			xp[mapsize-1][mapsize-2]=1;
+		} else {
+			xp[mapsize-2][mapsize-1]=-xp_side*2;
+			xp[mapsize-2][mapsize-2]=-xp_side*2;
+			xp[mapsize-1][mapsize-2]=-xp_side*2;
+		};
+	};
+
+	function cango(player, themap){
+		for (var i=0; i<mapsize; i++)
+			for (var j=0; j<mapsize; j++)
+				if (caneat(player,themap, j,i)[0]>0) return true;
+		return false;
+	};
+
+	function caneat(player, themap, x,y){
+		var offset, count=0, value=0, buff=[];
+		if (themap[y][x]!=0) return [0,0];
+		for (var d=0;d<8;d++){
+			offset=1; 
+			buff=[];
+			while (y+dir[d][1]*offset>=0 && y+dir[d][1]*offset<mapsize && 
+				x+dir[d][0]*offset>=0 && x+dir[d][0]*offset<mapsize && 
+				themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==3-player){
+				buff.push(xp[y+dir[d][1]*offset][x+dir[d][0]*offset]);
+				offset++;
+			};
+			if (y+dir[d][1]*offset>=0 && y+dir[d][1]*offset<mapsize && 
+				x+dir[d][0]*offset>=0 && x+dir[d][0]*offset<mapsize && 
+				themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==player){
+				count+=offset-1;
+				for (var i=0; i<buff.length; i++)
+					value+=buff[i];
+			};
+		};
+		if (count>0){
+			count++;
+			value+=xp[y][x];
+		};
+		return [count, value];
+	};
+
+	function eat(player, themap, x,y){
+		var done=false, offset=0, eating=false, count=0;
+		if (themap[y][x]!=0) return 0;
+		for (var d=0;d<8;d++){
+			done=false, offset=0, eating=false;
+			while (!done){
+				offset++;
+				if (y+dir[d][1]*offset>mapsize-1 || y+dir[d][1]*offset<0 || 
+					x+dir[d][0]*offset>mapsize-1 || x+dir[d][0]*offset<0 || 
+					themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==0 || 
+					themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==player) 
+					done=true;
+				if (offset>1 &&
+					y+dir[d][1]*offset>=0 && y+dir[d][1]*offset<mapsize && 
+					x+dir[d][0]*offset>=0 && x+dir[d][0]*offset<mapsize && 
+					themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==player) 
+					eating=true;
+			};
+			if (eating && offset>1) {
+				for (var k=1;k<=offset;k++) 
+					themap[y+dir[d][1]*k][x+dir[d][0]*k]=player;
+				count+=offset-1;
+				themap[y][x]=player;
+			};
+		};
+		return count;
+	};
+	
+	function winner(){
+		var player1=0, player2=0;
+		for (var i=0;i<mapsize;i++)
+			for (var j=0;j<mapsize;j++) {
+				if (draftmap[i][j]==1) player1++;
+				if (draftmap[i][j]==2) player2++;
+			};
+		if (cango(1, draftmap) || cango(2, draftmap)) return null;
+		if (player1>player2) return 1;
+		if (player2>player1) return 2;
+		return 0;
+	};
+
+	function move(player, ai_level){
+		var tempmap=[], direct_gain,res, gain,
+			maxgain, maxx, maxy, over=true;	
+
+		updateXp();
+		
+		for (var i=0; i<mapsize; i++)
+			for (var j=0; j<mapsize; j++) {
+				direct_gain=caneat(player, draftmap, j,i);
+				if (direct_gain[0]>0){		
+					if ((mapsize*mapsize-4-stepsLeft())<=ai_depth) 
+						direct_gain[1]=direct_gain[0];
+					if (ai_level>1){
+						tempmap=copymap(draftmap);
+						eat(player, draftmap, j, i);
+						var win=winner();
+						if (win==null) {
+							if (cango(3-player, draftmap)) {
+								res = move(3-player, ai_level-1);
+								gain = direct_gain[1] - res[2];							
+							} else {
+								res = move(player, ai_level);
+								gain = direct_gain[1] + res[2];
+						}} else {
+							if (win==player) {
+								gain = winprize;
+							} else if (win==3-player) {
+								gain = -winprize;
+							} else gain=0;
+						};
+						draftmap=copymap(tempmap);
+					} else {
+						gain=direct_gain[1];
+					};
+					if (maxgain==null || gain > maxgain || 
+						(gain==maxgain && Math.random()>0.5)){
+						maxgain=gain;
+						maxx=j;
+						maxy=i;
+					};
+					over=false;
+				};
+			};
+		return [maxx,maxy,maxgain];
+	};
+	
+	function stepsLeft(){
+		var c=0;
+		for (var i=0; i<mapsize; i++)
+			for (var j=0; j<mapsize; j++)
+				if (draftmap[i][j]==0) c++
+		return c;
+	}
+	
+	this.go = function(map, player){
+		draftmap=copymap(map);
+		var boostFrom=22-ai_depth,
+			stepsToWin=stepsLeft(), 
+			adjusted_ai_depth=ai_depth;
+		if (stepsToWin<boostFrom) adjusted_ai_depth+=boostFrom-stepsToWin;
+		var res=move(player, adjusted_ai_depth);
+		if (res[0]!=null & res[1]!=null) return [res[0], res[1]]
+			else return null;
+	};
+};
+
+
+function Player_AI_VH1(){
+	
+	var mapsize=8,
+		dir=[[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]],
+		draftmap=[], xp=[], xp_corner=1, xp_side=1,
+		ai_depth=4, winprize=99999;
+
+	for (var i=0; i<mapsize; i++){
+		xp.push([]);
+		for (var j=0; j<mapsize; j++){
+			xp[i].push(1);
+		};
+	};
+// 	for (var i=0; i<mapsize; i++){
+// 		xp[0][i]=xp_side;
+// 		xp[mapsize-1][i]=xp_side;
+// 		xp[i][0]=xp_side;
+// 		xp[i][mapsize-1]=xp_side;
+// 	};
+// 	for (var i=0; i<mapsize; i++){
+// 		xp[1][i]=-xp_side;
+// 		xp[mapsize-2][i]=-xp_side;
+// 		xp[i][1]=-xp_side;
+// 		xp[i][mapsize-2]=-xp_side;
+// 	};
+	xp[0][0]=xp_corner;
+	xp[mapsize-1][0]=xp_corner;
+	xp[0][mapsize-1]=xp_corner;
+	xp[mapsize-1][mapsize-1]=xp_corner;
+
+	function cango(player, themap){
+		for (var i=0; i<mapsize; i++)
+			for (var j=0; j<mapsize; j++)
+				if (caneat(player,themap, j,i)[0]>0) return true;
+		return false;
+	};
+
+	function caneat(player, themap, x,y){
+		var offset, count=0, value=0, buff=[];
+		if (themap[y][x]!=0) return [0,0];
+		for (var d=0;d<8;d++){
+			offset=1; 
+			buff=[];
+			while (y+dir[d][1]*offset>=0 && y+dir[d][1]*offset<mapsize && 
+				x+dir[d][0]*offset>=0 && x+dir[d][0]*offset<mapsize && 
+				themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==3-player){
+				buff.push(xp[y+dir[d][1]*offset][x+dir[d][0]*offset]);
+				offset++;
+			};
+			if (y+dir[d][1]*offset>=0 && y+dir[d][1]*offset<mapsize && 
+				x+dir[d][0]*offset>=0 && x+dir[d][0]*offset<mapsize && 
+				themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==player){
+				count+=offset-1;
+				for (var i=0; i<buff.length; i++)
+					value+=buff[i];
+			};
+		};
+		if (count>0){
+			count++;
+			value+=xp[y][x];
+		};
+		return [count, value];
+	};
+
+	function eat(player, themap, x,y){
+		var done=false, offset=0, eating=false, count=0;
+		if (themap[y][x]!=0) return 0;
+		for (var d=0;d<8;d++){
+			done=false, offset=0, eating=false;
+			while (!done){
+				offset++;
+				if (y+dir[d][1]*offset>mapsize-1 || y+dir[d][1]*offset<0 || 
+					x+dir[d][0]*offset>mapsize-1 || x+dir[d][0]*offset<0 || 
+					themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==0 || 
+					themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==player) 
+					done=true;
+				if (offset>1 &&
+					y+dir[d][1]*offset>=0 && y+dir[d][1]*offset<mapsize && 
+					x+dir[d][0]*offset>=0 && x+dir[d][0]*offset<mapsize && 
+					themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==player) 
+					eating=true;
+			};
+			if (eating && offset>1) {
+				for (var k=1;k<=offset;k++) 
+					themap[y+dir[d][1]*k][x+dir[d][0]*k]=player;
+				count+=offset-1;
+				themap[y][x]=player;
+			};
+		};
+		return count;
+	};
+	
+	function winner(){
+		var player1=0, player2=0;
+		for (var i=0;i<mapsize;i++)
+			for (var j=0;j<mapsize;j++) {
+				if (draftmap[i][j]==1) player1++;
+				if (draftmap[i][j]==2) player2++;
+			};
+		if (cango(1, draftmap) || cango(2, draftmap)) return null;
+		if (player1>player2) return 1;
+		if (player2>player1) return 2;
+		return 0;
+	};
+
+	function move(player, ai_level){
+		var tempmap=[], direct_gain,res, gain,
+			maxgain, maxx, maxy, over=true;	
+
+		for (var i=0; i<mapsize; i++)
+			for (var j=0; j<mapsize; j++) {
+				direct_gain=caneat(player, draftmap, j,i);
+				if (direct_gain[0]>0){		
+					if ((mapsize*mapsize-4-stepCount)<=ai_depth) 
+						direct_gain[1]=direct_gain[0];
+					if (ai_level>1){
+						tempmap=copymap(draftmap);
+						eat(player, draftmap, j, i);
+						var win=winner();
+						if (win==null) {
+							if (cango(3-player, draftmap)) {
+								res = move(3-player, ai_level-1);
+								gain = direct_gain[1] - res[2];							
+							} else {
+								res = move(player, ai_level-1);
+								gain = direct_gain[1] + res[2];
+						}} else {
+							if (win==player) {
+								gain = winprize;
+							} else if (win==3-player) {
+								gain = -winprize;
+							} else gain=0;
+						};
+						draftmap=copymap(tempmap);
+					} else {
+						gain=direct_gain[1];
+					};
+					if (maxgain==null || gain > maxgain || 
+						(gain==maxgain && Math.random()>0.5)){
+						maxgain=gain;
+						maxx=j;
+						maxy=i;
+					};
+					over=false;
+				};
+			};
+		return [maxx,maxy,maxgain];
+	};
+	
+	this.go = function(map, player){
+		draftmap=copymap(map);
+		var res=move(player, ai_depth);
+		if (res[0]!=null & res[1]!=null) return [res[0], res[1]]
+			else return null;
+	};
+};
+
+function Player_AI_VeryHard(){
+	
+	var mapsize=8,
+		dir=[[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]],
+		draftmap=[], xp=[], xp_corner=mapsize*4, xp_side=Math.round(mapsize/2),
+		ai_depth=6, winprize=99999;
+
+	for (var i=0; i<mapsize; i++){
+		xp.push([]);
+		for (var j=0; j<mapsize; j++){
+			xp[i].push(1);
+		};
+	};
+	for (var i=0; i<mapsize; i++){
+		xp[0][i]=xp_side;
+		xp[mapsize-1][i]=xp_side;
+		xp[i][0]=xp_side;
+		xp[i][mapsize-1]=xp_side;
+	};
+	for (var i=0; i<mapsize; i++){
+		xp[1][i]=-xp_side;
+		xp[mapsize-2][i]=-xp_side;
+		xp[i][1]=-xp_side;
+		xp[i][mapsize-2]=-xp_side;
+	};
+	xp[0][0]=xp_corner;
+	xp[mapsize-1][0]=xp_corner;
+	xp[0][mapsize-1]=xp_corner;
+	xp[mapsize-1][mapsize-1]=xp_corner;
+
+	function cango(player, themap){
+		for (var i=0; i<mapsize; i++)
+			for (var j=0; j<mapsize; j++)
+				if (caneat(player,themap, j,i)[0]>0) return true;
+		return false;
+	};
+
+	function caneat(player, themap, x,y){
+		var offset, count=0, value=0, buff=[];
+		if (themap[y][x]!=0) return [0,0];
+		for (var d=0;d<8;d++){
+			offset=1; 
+			buff=[];
+			while (y+dir[d][1]*offset>=0 && y+dir[d][1]*offset<mapsize && 
+				x+dir[d][0]*offset>=0 && x+dir[d][0]*offset<mapsize && 
+				themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==3-player){
+				buff.push(xp[y+dir[d][1]*offset][x+dir[d][0]*offset]);
+				offset++;
+			};
+			if (y+dir[d][1]*offset>=0 && y+dir[d][1]*offset<mapsize && 
+				x+dir[d][0]*offset>=0 && x+dir[d][0]*offset<mapsize && 
+				themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==player){
+				count+=offset-1;
+				for (var i=0; i<buff.length; i++)
+					value+=buff[i];
+			};
+		};
+		if (count>0){
+			count++;
+			value+=xp[y][x];
+		};
+		return [count, value];
+	};
+
+	function eat(player, themap, x,y){
+		var done=false, offset=0, eating=false, count=0;
+		if (themap[y][x]!=0) return 0;
+		for (var d=0;d<8;d++){
+			done=false, offset=0, eating=false;
+			while (!done){
+				offset++;
+				if (y+dir[d][1]*offset>mapsize-1 || y+dir[d][1]*offset<0 || 
+					x+dir[d][0]*offset>mapsize-1 || x+dir[d][0]*offset<0 || 
+					themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==0 || 
+					themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==player) 
+					done=true;
+				if (offset>1 &&
+					y+dir[d][1]*offset>=0 && y+dir[d][1]*offset<mapsize && 
+					x+dir[d][0]*offset>=0 && x+dir[d][0]*offset<mapsize && 
+					themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==player) 
+					eating=true;
+			};
+			if (eating && offset>1) {
+				for (var k=1;k<=offset;k++) 
+					themap[y+dir[d][1]*k][x+dir[d][0]*k]=player;
+				count+=offset-1;
+				themap[y][x]=player;
+			};
+		};
+		return count;
+	};
+	
+	function winner(){
+		var player1=0, player2=0;
+		for (var i=0;i<mapsize;i++)
+			for (var j=0;j<mapsize;j++) {
+				if (draftmap[i][j]==1) player1++;
+				if (draftmap[i][j]==2) player2++;
+			};
+		if (cango(1, draftmap) || cango(2, draftmap)) return null;
+		if (player1>player2) return 1;
+		if (player2>player1) return 2;
+		return 0;
+	};
+
+	function move(player, ai_level){
+		var tempmap=[], direct_gain,res, gain,
+			maxgain, maxx, maxy, over=true;	
+
+		for (var i=0; i<mapsize; i++)
+			for (var j=0; j<mapsize; j++) {
+				direct_gain=caneat(player, draftmap, j,i);
+				if (direct_gain[0]>0){		
+					if ((mapsize*mapsize-4-stepCount)<=ai_depth) 
+						direct_gain[1]=direct_gain[0];
+					if (ai_level>1){
+						tempmap=copymap(draftmap);
+						eat(player, draftmap, j, i);
+						var win=winner();
+						if (win==null) {
+							if (cango(3-player, draftmap)) {
+								res = move(3-player, ai_level-1);
+								gain = direct_gain[1] - res[2];							
+							} else {
+								res = move(player, ai_level-1);
+								gain = direct_gain[1] + res[2];
+						}} else {
+							if (win==player) {
+								gain = winprize;
+							} else if (win==3-player) {
+								gain = -winprize;
+							} else gain=0;
+						};
+						draftmap=copymap(tempmap);
+					} else {
+						gain=direct_gain[1];
+					};
+					if (maxgain==null || gain > maxgain || 
+						(gain==maxgain && Math.random()>0.5)){
+						maxgain=gain;
+						maxx=j;
+						maxy=i;
+					};
+					over=false;
+				};
+			};
+		return [maxx,maxy,maxgain];
+	};
+	
+	this.go = function(map, player){
+		draftmap=copymap(map);
+		var res=move(player, ai_depth);
+		if (res[0]!=null & res[1]!=null) return [res[0], res[1]]
+			else return null;
+	};
+};
+
+
+function Player_AI_A(){
+	
+	var mapsize=8,
+		dir=[[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]],
+		draftmap=[], xp=[];
+
+	this.xp_corner=mapsize*4;
+	this.xp_side=2;
+	this.ai_depth=4;
+	this.deathpentalty=-999999;
+
+	for (var i=0; i<mapsize; i++){
+		xp.push([]);
+		for (var j=0; j<mapsize; j++){
+			xp[i].push(1);
+		};
+	};
+	for (var i=0; i<mapsize; i++){
+		xp[0][i]=this.xp_side;
+		xp[mapsize-1][i]=this.xp_side;
+		xp[i][0]=this.xp_side;
+		xp[i][mapsize-1]=this.xp_side;
+	};
+	for (var i=0; i<mapsize; i++){
+		xp[1][i]=-this.xp_side;
+		xp[mapsize-2][i]=-this.xp_side;
+		xp[i][1]=-this.xp_side;
+		xp[i][mapsize-2]=-this.xp_side;
+	};
+	xp[0][0]=this.xp_corner;
+	xp[mapsize-1][0]=this.xp_corner;
+	xp[0][mapsize-1]=this.xp_corner;
+	xp[mapsize-1][mapsize-1]=this.xp_corner;
+
+	function cango(player, themap){
+		for (var i=0; i<mapsize; i++)
+			for (var j=0; j<mapsize; j++)
+				if (caneat(player,themap, j,i)[0]>0) return true;
+		return false;
+	};
+
+	function caneat(player, themap, x,y){
+		var offset, count=0, value=0, buff=[];
+		if (themap[y][x]!=0) return [0,0];
+		for (var d=0;d<8;d++){
+			offset=1; 
+			buff=[];
+			while (y+dir[d][1]*offset>=0 && y+dir[d][1]*offset<mapsize && 
+				x+dir[d][0]*offset>=0 && x+dir[d][0]*offset<mapsize && 
+				themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==3-player){
+				buff.push(xp[y+dir[d][1]*offset][x+dir[d][0]*offset]);
+				offset++;
+			};
+			if (y+dir[d][1]*offset>=0 && y+dir[d][1]*offset<mapsize && 
+				x+dir[d][0]*offset>=0 && x+dir[d][0]*offset<mapsize && 
+				themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==player){
+				count+=offset-1;
+				for (var i=0; i<buff.length; i++)
+					value+=buff[i];
+			};
+		};
+		if (count>0){
+			count++;
+			value+=xp[y][x];
+		};
+		return [count, value];
+	};
+
+	function eat(player, themap, x,y){
+		var done=false, offset=0, eating=false, count=0;
+		if (themap[y][x]!=0) return 0;
+		for (var d=0;d<8;d++){
+			done=false, offset=0, eating=false;
+			while (!done){
+				offset++;
+				if (y+dir[d][1]*offset>mapsize-1 || y+dir[d][1]*offset<0 || 
+					x+dir[d][0]*offset>mapsize-1 || x+dir[d][0]*offset<0 || 
+					themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==0 || 
+					themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==player) 
+					done=true;
+				if (offset>1 &&
+					y+dir[d][1]*offset>=0 && y+dir[d][1]*offset<mapsize && 
+					x+dir[d][0]*offset>=0 && x+dir[d][0]*offset<mapsize && 
+					themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==player) 
+					eating=true;
+			};
+			if (eating && offset>1) {
+				for (var k=1;k<=offset;k++) 
+					themap[y+dir[d][1]*k][x+dir[d][0]*k]=player;
+				count+=offset-1;
+				themap[y][x]=player;
+			};
+		};
+		return count;
+	};
+	
+	function winner(){
+		var player1=0, player2=0;
+		for (var i=0;i<mapsize;i++)
+			for (var j=0;j<mapsize;j++) {
+				if (draftmap[i][j]==1) player1++;
+				if (draftmap[i][j]==2) player2++;
+			};
+		if (player1>player2) return 1;
+		if (player2>player1) return 2;
+		return 0;
+	};
+
+	function move(player, ai_level){
+		var tempmap=[], direct_gain,
+			maxgain, maxx, maxy, over=true;			
+		for (var i=0; i<mapsize; i++)
+			for (var j=0; j<mapsize; j++) {
+				direct_gain=caneat(player, draftmap, j,i);
+				if (direct_gain[0]>0){			
+					if (ai_level>1){
+						tempmap=copymap(draftmap);
+						eat(player, draftmap, j, i);
+						var res, gain;
+						if (cango(3-player, draftmap)) {
+							res = move(3-player, ai_level-1);
+							gain = direct_gain[1] - res[2];
+						} else if (cango(player, draftmap)){
+							res = move(player, ai_level-1);
+							gain = direct_gain[1] + res[2];
+						} else if (winner()==curPlayer) {
+							gain = -this.deathpentalty;
+						} else {
+							gain = this.deathpentalty;
+						};
+						draftmap=copymap(tempmap);
+					} else gain=direct_gain[1];
+					if (maxgain==null || gain > maxgain || 
+						(gain==maxgain && Math.random()>0.5)){
+						maxgain=gain;
+						maxx=j;
+						maxy=i;
+					};
+					over=false;
+				};
+			};
+	//	console.log(ai_level, player, maxx,maxy,maxgain, copymap(draftmap));
+		return [maxx,maxy,maxgain];
+	};
+	
+	this.go = function(map, player){
+		draftmap=copymap(map);
+		var res=move(player, this.ai_depth);
+		if (res[0]!=null & res[1]!=null) return [res[0], res[1]]
+			else return null;
+	};
+};
+
+function init(){
+	stepCount=0;
+
+	curPlayer = (testCount % 2 == 0 ? 1 : 2);
+
+	gameover=false;
+	skipping=false;
+	
+	map=[];xp=[];
+	for (var i=0; i<mapsize; i++){
+		map.push([]);
+		xp.push([]);
+		for (var j=0; j<mapsize; j++){
+			map[i].push(0);
+			xp[i].push(1);
+		};
+	};
+	map[parseInt(mapsize/2)-1][parseInt(mapsize/2)-1]=2;
+	map[parseInt(mapsize/2)-1][parseInt(mapsize/2)]=1;
+	map[parseInt(mapsize/2)][parseInt(mapsize/2)]=2;
+	map[parseInt(mapsize/2)][parseInt(mapsize/2)-1]=1;
+	
+// 	map[2][2]=1;
+// 	map[2][3]=1;
+// 	map[2][4]=1;
+// 	map[2][5]=1;
+// 	
+// 	map[3][2]=1;
+// 	map[3][3]=1;
+// 	map[3][4]=2;
+// 	map[3][5]=1;
+// 	
+// 	map[4][2]=1;
+// 	map[4][3]=1;
+// 	map[4][4]=1;
+// 	map[4][5]=1;
+// 
+// 	map[5][2]=1;
+// 	map[5][3]=1;
+// 	map[5][4]=1;
+// 	map[5][5]=1;
+// 
+// 	map[1][3]=1;
+// 	map[1][5]=1;
+// 	
+// 	map[6][2]=1;
+// 	map[6][4]=1;
+// 	map[5][6]=1;
+	
+	var xp_corner=mapsize*mapsize, xp_side=Math.round(mapsize/2);
+	for (var i=0; i<mapsize; i++){
+		xp[0][i]=xp_side;
+		xp[mapsize-1][i]=xp_side;
+		xp[i][0]=xp_side;
+		xp[i][mapsize-1]=xp_side;
+	};
+	xp[0][0]=xp_corner*2;
+	xp[mapsize-1][0]=xp_corner;
+	xp[0][mapsize-1]=xp_corner;
+	xp[mapsize-1][mapsize-1]=xp_corner;
+	
+	maphistory=[];
+	turnhistory=[];
+};
+
+function copymap(m){
+	var themap=[];
+	for (var i=0; i<mapsize; i++){
+		themap.push([]);
+		for (var j=0; j<mapsize; j++)
+			themap[i].push(m[i][j]);
+	};
+	return themap;
+}
+
+document.onmousedown = function(e){
+	var x,y;
+	x=parseInt((e.pageX-topleft[0]) / blocksize);
+	y=parseInt((e.pageY-topleft[1]) / blocksize);
+	if (x>=0 && x<mapsize && y>=0 && y<mapsize 
+		&& caneat(curPlayer, map, x,y)[0]>0) {	
+		recentTouch=[x,y];
+		go();
+	};
+};
+
+function go(){
+	var next_move;
+
+	if (curPlayer==1) {
+		if (gameMode==0){
+		if (cango(curPlayer, map)) {
+			if (recentTouch==null) {
+				return;
+			} else {
+				next_move=[-1,-1];
+				next_move[0]=recentTouch[0];
+				next_move[1]=recentTouch[1];
+				recentTouch=null;
+			};
+		}} else 
+			next_move=ai_challenger.go(map, curPlayer);
+	} else 
+		next_move=ai_champion.go(map, curPlayer);
+			
+	if (next_move!=null){
+		saveLastMap();
+		eat(curPlayer, map, next_move[0], next_move[1]);
+		lastComponent=[next_move[0], next_move[1]];
+		curPlayer=3-curPlayer;
+		render();
+		skipping=false;
+		setTimeout(go, 1);
+	} else if (!skipping) {
+		curPlayer=3-curPlayer;
+		skipping=true;
+		render();
+		setTimeout(go, 1);
+	} else {
+		gameover=true;
+		render();
+		testCount++;
+		var res=gamestatus();
+		if (res[0]>res[1]) testResult[0]++;
+		if (res[0]<res[1]) testResult[1]++;
+		console.log("Testing "+testCount+"/"+testLimit+" Result: "+(res[0]==res[1]?"Draw":(res[0]>res[1]? "Black Won":"White Won"))
+			+" by "+Math.abs(res[1]-res[0]));
+		if (testCount<testLimit) {
+			init();
+			setTimeout(go, 1);
+		} else {
+			console.log("============================");
+			console.log("Black Win Rate: "+Math.round(testResult[0]*100/testLimit)+"% White Win Rate: "
+				+Math.round(testResult[1]*100/testLimit)+"% Draw: "
+				+Math.round((testLimit-testResult[0]-testResult[1])*100/testLimit)+"%");
+		};
+	};
+
+};
+
+function gamestatus(){
+	var p1=0,p2=0;
+	for (var i=0; i<mapsize; i++)
+		for (var j=0; j<mapsize; j++){
+			if (map[i][j]==1) p1++ 
+				else if (map[i][j]==2) p2++;
+		}
+	return [p1,p2];
+}
+
+document.onkeydown = function(e){
+var keynum;
+if(window.event) // IE
+	{
+	keynum = e.keyCode
+	}
+else if(e.which) // Netscape/Firefox/Opera
+	{
+	keynum = e.which
+	}
+if (keynum==8 && maphistory.length>0)
+{
+	restoreLastMap();
+}
+};
+
+function render(){
+ctx.fillStyle = 'rgba(0,0,0,1)';
+ctx.clearRect(0,0,canvas.width, canvas.height);
+
+ctx.font= head*0.8 + "px Verdana";
+
+if (gameover) {
+	ctx.fillStyle= "red";
+	var status=gamestatus();
+	var txt="Game Over: "+(status[0]==status[1] ? "Draw!" : (status[0]>status[1] ? "Black Wins!" : "White Wins!"));
+	ctx.fillText(txt, topleft[0], head);
+} else {
+	ctx.fillStyle= (curPlayer==1?"black":"white");
+	var txt="Current player: " + (curPlayer==1?"Black":"White (I'm thinking...)");
+	if (skipping) {
+		txt+=" (Skipping "+ (3-curPlayer== 1 ?"Black)":"White)");
+	};
+	ctx.fillText(txt, topleft[0], head);
+};
+
+ctx.save();
+ctx.strokeStyle = 'black';
+ctx.lineWidth = 1;
+ctx.translate(topleft[0],topleft[1]);
+ctx.beginPath();
+for (var i=0; i<mapsize+1; i++)
+	for (var j=0; j<mapsize+1; j++){
+		ctx.moveTo(0,j*blocksize);
+		ctx.lineTo(blocksize*mapsize,j*blocksize);
+		ctx.moveTo(i*blocksize,0);
+		ctx.lineTo(i*blocksize,blocksize*mapsize);
+	}
+ctx.stroke();
+
+for (var i=0; i<mapsize; i++)
+	for (var j=0; j<mapsize; j++){
+		if (map[i][j]!=0) {
+			ctx.beginPath();                               
+			var r= blocksize*0.42;
+			ctx.arc((j+0.5)*blocksize, (i+0.5)*blocksize, r, 0, Math.PI * 2, true);  
+			ctx.closePath();
+			if (map[i][j]==1) ctx.fillStyle = 'rgba(20,20,20,1)' 
+				else ctx.fillStyle = 'rgba(240,240,240,1)';                     
+			ctx.fill(); 
+			if (lastComponent[0]==j && lastComponent[1]==i){
+			ctx.beginPath();                               
+			var r= blocksize*0.05;
+			ctx.arc((j+0.5)*blocksize, (i+0.5)*blocksize, r, 0, Math.PI * 2, true);  
+			ctx.closePath();
+			if (map[i][j]==2) ctx.fillStyle = 'rgba(20,20,20,1)' 
+				else ctx.fillStyle = 'rgba(240,240,240,1)';                     
+			ctx.fill(); 
+			};
+		};
+		if (curPlayer==firstgo)
+			if (caneat(curPlayer, map, j, i)[0]>0) {
+				ctx.beginPath();                               
+				var r= blocksize*0.05;
+				ctx.arc((j+0.5)*blocksize, (i+0.5)*blocksize, r, 0, Math.PI * 2, true);  
+				ctx.closePath();
+				ctx.fillStyle = 'rgba(20,200,20,1)'; 
+				ctx.fill(); 			
+			};
+	};
+ctx.restore();
+}
+
+function cango(player, themap){
+	for (var i=0; i<mapsize; i++)
+		for (var j=0; j<mapsize; j++)
+			if (caneat(player,themap, j,i)[0]>0) return true;
+	return false;
+};
+
+function caneat(player, themap, x,y){
+	var offset, count=0, value=0, buff=[];
+	if (themap[y][x]!=0) return [0,0];
+	for (var d=0;d<8;d++){
+		offset=1; 
+		buff=[];
+		while (y+dir[d][1]*offset>=0 && y+dir[d][1]*offset<mapsize && 
+			x+dir[d][0]*offset>=0 && x+dir[d][0]*offset<mapsize && 
+			themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==3-player){
+			buff.push(xp[y+dir[d][1]*offset][x+dir[d][0]*offset]);
+			offset++;
+		};
+		if (y+dir[d][1]*offset>=0 && y+dir[d][1]*offset<mapsize && 
+			x+dir[d][0]*offset>=0 && x+dir[d][0]*offset<mapsize && 
+			themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==player){
+			count+=offset-1;
+			for (var i=0; i<buff.length; i++)
+				value+=buff[i];
+		};
+	};
+	if (count>0){
+		count++;
+		value+=xp[y][x];
+	};
+	return [count, value];
+}
+
+function eat(player, themap, x,y){
+	var done=false, offset=0, eating=false, count=0;
+	if (themap[y][x]!=0) return 0;
+	for (var d=0;d<8;d++){
+		done=false, offset=0, eating=false;
+		while (!done){
+			offset++;
+			if (y+dir[d][1]*offset>mapsize-1 || y+dir[d][1]*offset<0 || 
+				x+dir[d][0]*offset>mapsize-1 || x+dir[d][0]*offset<0 || 
+				themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==0 || 
+				themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==player) 
+				done=true;
+			if (offset>1 &&
+				y+dir[d][1]*offset>=0 && y+dir[d][1]*offset<mapsize && 
+				x+dir[d][0]*offset>=0 && x+dir[d][0]*offset<mapsize && 
+				themap[y+dir[d][1]*offset][x+dir[d][0]*offset]==player) 
+				eating=true;
+		};
+		if (eating && offset>1) {
+			for (var k=1;k<=offset;k++) 
+				themap[y+dir[d][1]*k][x+dir[d][0]*k]=player;
+			count+=offset-1;
+			themap[y][x]=player;
+		};
+	};
+	stepCount++;
+	return count;
+}
+
+function saveLastMap(){
+	var snapshot=[];
+	for (var i=0; i<mapsize; i++){
+		snapshot.push([]);
+		for (var j=0; j<mapsize; j++)
+			snapshot[i].push(map[i][j]);
+	};
+	maphistory.push(snapshot);
+	turnhistory.push(curPlayer);
+};
+
+function restoreLastMap(){
+	if (maphistory.length==0) return;
+	var snapshot=maphistory.pop();
+	map=copymap(snapshot);
+	draftmap=copymap(snapshot);
+	curPlayer=turnhistory.pop();
+	gameover=false;
+	render();
+};
+
+console.log("Starting "+testLimit+" Tests");
+console.log("============================");
+
+init();
+window.onresize();
+
+go();
+
+</script>

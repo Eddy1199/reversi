@@ -1,0 +1,221 @@
+<body style="margin:0"><canvas id="canvas"></canvas></body>
+
+<script>
+var canvas = document.getElementById("canvas");
+var ctx = canvas.getContext("2d");
+canvas.height=window.innerHeight;
+canvas.width=window.innerWidth;
+
+document.body.style.backgroundColor="#225511";
+
+var mapsize=12, head=30,
+	topleft=[], canvasSize, blocksize, 
+	firstgo=1, curPlayer=firstgo, 
+	skipping=false, gameover=false, 
+	dir=[[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]],
+	map=[], maphistory=[], turnhistory=[];
+
+window.onresize=function(){
+	canvas.height=window.innerHeight;
+	canvas.width=window.innerWidth;	
+	var h=canvas.height-head, w=canvas.width,
+		min= h > w ? w: h;
+	canvasSize= min * 0.9;
+	topleft[0]=(w-canvasSize)/2;
+	topleft[1]=(h-canvasSize)/2 + head;
+	blocksize=canvasSize/mapsize;
+	render();
+};
+
+function initmap(){
+	map=[];
+	for (var i=0; i<mapsize; i++){
+		map.push([]);
+		for (var j=0; j<mapsize; j++)
+			map[i].push(0);
+	};
+	map[parseInt(mapsize/2)-1][parseInt(mapsize/2)-1]=1;
+	map[parseInt(mapsize/2)-1][parseInt(mapsize/2)]=2;
+	map[parseInt(mapsize/2)][parseInt(mapsize/2)-1]=2;
+	map[parseInt(mapsize/2)][parseInt(mapsize/2)]=1;
+};
+
+document.onmousedown = function(e){
+var x,y,c, status=[];
+	x=parseInt((e.pageX-topleft[0]) / blocksize);
+	y=parseInt((e.pageY-topleft[1]) / blocksize);
+	if (caneat(curPlayer,x,y)>0) {
+		saveLastMap();
+		eat(curPlayer,x,y);
+		if (cango(3-curPlayer)) curPlayer=3-curPlayer
+			else {
+				skipping=true;
+				if (!cango(curPlayer)) gameover=true;
+			}
+		render();
+	};
+};
+
+function gamestatus(){
+	var p1=0,p2=0;
+	for (var i=0; i<mapsize; i++)
+		for (var j=0; j<mapsize; j++){
+			if (map[i][j]==1) p1++ 
+				else if (map[i][j]==2) p2++;
+		}
+	return [p1,p2];
+}
+
+document.onkeydown = function(e){
+var keynum;
+if(window.event) // IE
+	{
+	keynum = e.keyCode
+	}
+else if(e.which) // Netscape/Firefox/Opera
+	{
+	keynum = e.which
+	}
+if (keynum==8 && maphistory.length>0)
+{
+	restoreLastMap();
+}
+};
+
+function render(){
+ctx.fillStyle = 'rgba(0,0,0,1)';
+ctx.clearRect(0,0,canvas.width, canvas.height);
+
+ctx.font= head*0.8 + "px Verdana";
+
+if (gameover) {
+	ctx.fillStyle= "red";
+	var status=gamestatus();
+	var txt="Game Over: "+(status[0]==status[1] ? "Draw!" : (status[0]>status[1] ? "Black Wins!" : "White Wins!"));
+	ctx.fillText(txt, topleft[0], head);
+} else {
+	ctx.fillStyle= (curPlayer==1?"black":"white");
+	var txt="Current player: " + (curPlayer==1?"Black":"White");
+	if (skipping) {
+		txt+=" (Skipping "+ (3-curPlayer== 1 ?"Black)":"White)");
+		skipping=false;
+	};
+	ctx.fillText(txt, topleft[0], head);
+};
+
+ctx.save();
+ctx.strokeStyle = '#112200';
+ctx.lineWidth = 1;
+ctx.translate(topleft[0],topleft[1]);
+ctx.beginPath();
+for (var i=0; i<mapsize+1; i++)
+	for (var j=0; j<mapsize+1; j++){
+		ctx.moveTo(0,j*blocksize);
+		ctx.lineTo(blocksize*mapsize,j*blocksize);
+		ctx.moveTo(i*blocksize,0);
+		ctx.lineTo(i*blocksize,blocksize*mapsize);
+	}
+ctx.stroke();
+
+for (var i=0; i<mapsize; i++)
+	for (var j=0; j<mapsize; j++)
+		if (map[i][j]!=0) {
+		ctx.beginPath();                               
+		var r= blocksize*0.42;
+		ctx.arc((j+0.5)*blocksize, (i+0.5)*blocksize, r, 0, Math.PI * 2, true);  
+		ctx.closePath();
+		if (map[i][j]==1) ctx.fillStyle = 'rgba(20,20,20,1)' 
+			else ctx.fillStyle = 'rgba(240,240,240,1)';                     
+		ctx.fill(); 
+	}
+ctx.restore();
+}
+
+function cango(player){
+	for (var i=0; i<mapsize; i++)
+		for (var j=0; j<mapsize; j++)
+			if (caneat(player,j,i)>0) return true;
+	return false;
+};
+
+function caneat(player, x,y){
+	var done=false, offset=0, eating=false, count=0;
+	if (map[y][x]!=0) return 0;
+	for (var d=0;d<8;d++){
+		done=false, offset=0, eating=false;
+		while (!done){
+			offset++;
+			if (y+dir[d][1]*offset>mapsize-1 || y+dir[d][1]*offset<0 || 
+				x+dir[d][0]*offset>mapsize-1 || x+dir[d][0]*offset<0 || 
+				map[y+dir[d][1]*offset][x+dir[d][0]*offset]==0 || 
+				map[y+dir[d][1]*offset][x+dir[d][0]*offset]==player) 
+				done=true;
+			if (offset>1 &&
+				y+dir[d][1]*offset>=0 && y+dir[d][1]*offset<mapsize && 
+				x+dir[d][0]*offset>=0 && x+dir[d][0]*offset<mapsize && 
+				map[y+dir[d][1]*offset][x+dir[d][0]*offset]==player) 
+				eating=true;
+		};
+		if (eating && offset>1) {
+			count+=offset-1;
+		};
+	};
+	return count;
+}
+
+function eat(player, x,y){
+	var done=false, offset=0, eating=false, count=0;
+	if (map[y][x]!=0) return 0;
+	for (var d=0;d<8;d++){
+		done=false, offset=0, eating=false;
+		while (!done){
+			offset++;
+			if (y+dir[d][1]*offset>mapsize-1 || y+dir[d][1]*offset<0 || 
+				x+dir[d][0]*offset>mapsize-1 || x+dir[d][0]*offset<0 || 
+				map[y+dir[d][1]*offset][x+dir[d][0]*offset]==0 || 
+				map[y+dir[d][1]*offset][x+dir[d][0]*offset]==player) 
+				done=true;
+			if (offset>1 &&
+				y+dir[d][1]*offset>=0 && y+dir[d][1]*offset<mapsize && 
+				x+dir[d][0]*offset>=0 && x+dir[d][0]*offset<mapsize && 
+				map[y+dir[d][1]*offset][x+dir[d][0]*offset]==player) 
+				eating=true;
+		};
+		if (eating && offset>1) {
+			for (var k=1;k<=offset;k++) 
+				map[y+dir[d][1]*k][x+dir[d][0]*k]=player;
+			count+=offset-1;
+			map[y][x]=player;
+		};
+	};
+	return count;
+}
+
+function saveLastMap(){
+	var snapshot=[];
+	for (var i=0; i<mapsize; i++){
+		snapshot.push([]);
+		for (var j=0; j<mapsize; j++)
+			snapshot[i].push(map[i][j]);
+	};
+	maphistory.push(snapshot);
+	turnhistory.push(curPlayer);
+};
+
+function restoreLastMap(){
+	if (maphistory.length==0) return;
+	var snapshot=maphistory.pop();
+	map=[];
+	for (var i=0; i<mapsize; i++){
+		map.push([]);
+		for (var j=0; j<mapsize; j++)
+			map[i].push(snapshot[i][j]);
+	};
+	curPlayer=turnhistory.pop();
+	render();
+};
+
+initmap();
+window.onresize();
+
+</script>
